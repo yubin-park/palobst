@@ -1,7 +1,7 @@
-from numba import jit
 import numpy as np
+from numba import njit, prange
 
-@jit(nopython=True)
+@njit(fastmath=True, parallel=True)
 def grow(X, Y, 
         t_rules,
         t_vals,
@@ -11,7 +11,8 @@ def grow(X, Y,
         nu, # learning_rate
         max_depth,
         min_samples_split, 
-        min_samples_leaf):
+        min_samples_leaf,
+        cache):
 
     n, m = X.shape
     t_idx[:,:] = 0
@@ -21,7 +22,7 @@ def grow(X, Y,
     n_oob = n - n_ib
     X_ib, X_oob = X[:n_ib,:], X[n_ib:,:]
     Y_ib, Y_oob = Y[:n_ib,:], Y[n_ib:,:]
-    svar, sval = split(X_ib, Y_ib, min_samples_leaf)
+    svar, sval = split(X_ib, Y_ib, min_samples_leaf, cache)
     c_ib = reorder(X_ib, Y_ib, 0, n_ib, svar, sval)
     c_oob = reorder(X_oob, Y_oob, 0, n_oob, svar, sval)
 
@@ -34,7 +35,7 @@ def grow(X, Y,
 
     for depth in range(1, max_depth+1):
         offset = 2**(depth-1) - 1
-        for nid in range(offset, 2*offset+1):
+        for nid in prange(offset, 2*offset+1):
             s_ib, e_ib = t_idx[nid,0], t_idx[nid,1]
             s_oob, e_oob = t_idx[nid,2], t_idx[nid,3]
             if e_ib == s_ib or e_oob == s_oob:
@@ -49,7 +50,7 @@ def grow(X, Y,
                 continue
 
             svar, sval = split(X_ib[s_ib:e_ib,:], Y_ib[s_ib:e_ib,:], 
-                                min_samples_leaf)
+                                min_samples_leaf, cache)
             c_ib = reorder(X_ib, Y_ib, s_ib, e_ib, svar, sval)
             c_oob = reorder(X_oob, Y_oob, s_oob, e_oob, svar, sval)
 
@@ -97,7 +98,7 @@ def grow(X, Y,
         Y_oob[s_oob:e_oob,1] += gamma
 
 
-@jit(nopython=True)
+@njit(fastmath=True, parallel=True)
 def check_GAP(Y, s, e, nu, distribution):
     y = Y[s:e,0]
     y_hat_old = Y[s:e,1] 
@@ -107,25 +108,31 @@ def check_GAP(Y, s, e, nu, distribution):
     else:
         return False
 
-@jit(nopython=True)
-def split(X, Y, min_samples_leaf):
+@njit(fastmath=True, parallel=True)
+def split(X, Y, min_samples_leaf, cache):
 
-    loss_min = np.inf
+    tol = 1e10
     svar_best = -1
     sval_best = 0
+    loss_min = tol
+    cache[:,0] = tol
 
-    for svar in range(X.shape[1]):
+    for svar in prange(X.shape[1]):
         sval, loss = get_sval(X[:,svar], Y[:,2], Y[:,3], min_samples_leaf)
         if sval < 0:
             continue
-        if loss < loss_min:
-            loss_min = loss
-            svar_best = svar
-            sval_best = sval
+        cache[svar,0] = loss
+        cache[svar,1] = sval
+
+    svar = np.argmin(cache[:,0])
+    if cache[svar,0] < tol:
+        loss_min = cache[svar,0]
+        svar_best = svar
+        sval_best = cache[svar,1]
 
     return svar_best, sval_best
 
-@jit(nopython=True)
+@njit(fastmath=True, parallel=True)
 def get_sval(x, grad, hess, min_samples_leaf):
 
     reg_lambda = 1.0
@@ -158,7 +165,7 @@ def get_sval(x, grad, hess, min_samples_leaf):
 
     return x_best, loss_min
 
-@jit(nopython=True)
+@njit(fastmath=True, parallel=True)
 def reorder(X, Y, s, e, svar, sval):
     X_ = X[s:e,:]
     Y_ = Y[s:e,:]
@@ -168,7 +175,7 @@ def reorder(X, Y, s, e, svar, sval):
     Y[s:e,:] = Y_[idx,:]
     return s + np.sum(ln)
 
-@jit(nopython=True)
+@njit(fastmath=True, parallel=True)
 def loss(y, y_hat, distribution):
     if distribution == "bernoulli":
         return np.mean(-2.0*(y*y_hat - np.logaddexp(0.0, y_hat)))
@@ -176,17 +183,17 @@ def loss(y, y_hat, distribution):
         return np.mean((y-y_hat)**2)
     
 
-@jit(nopython=True)
+@njit(fastmath=True, parallel=True)
 def apply_tree(X, y, t_svar, t_sval, t_vals, n_estimators, t_nodes):
-    for i in range(X.shape[0]):
-        for j in range(n_estimators):
+    for i in prange(X.shape[0]):
+        for j in prange(n_estimators):
             y[i] += apply_tree0(X[i,:], 
                         t_svar[(t_nodes*j):(t_nodes*(j+1))],
                         t_sval[(t_nodes*j):(t_nodes*(j+1))],
                         t_vals[(t_nodes*j):(t_nodes*(j+1))])
     return y 
 
-@jit(nopython=True)
+@njit(fastmath=True)
 def apply_tree0(x, t_svar, t_sval, t_vals):
     nid = 0
     while t_svar[nid] > -1:

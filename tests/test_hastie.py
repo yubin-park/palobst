@@ -13,7 +13,7 @@ class PaloBstTestCase(unittest.TestCase):
     def test_cls(self):
 
         np.random.seed(1)
-        n_samples = 10000
+        n_samples = 500
         test_size = 0.2
         n_est = 100
         max_depth = 10
@@ -34,23 +34,25 @@ class PaloBstTestCase(unittest.TestCase):
                                 n_estimators=n_est, 
                                 learning_rate=lr,
                                 max_depth=max_depth)
+        model_palo.warmup()
 
         t_start = time.time()
         model_palo.fit(X_train, y_train)
-        t_elapsed = time.time() - t_start
+        t_elapsed_palo = time.time() - t_start
         y_hat = model_palo.predict_proba(X_test)[:,1]
         auc_palo = roc_auc_score(y_test, y_hat)
-        print(t_elapsed)
 
         t_start = time.time()
         model_sklr.fit(X_train, y_train)
-        t_elapsed = time.time() - t_start
+        t_elapsed_sklr = time.time() - t_start
         y_hat = model_sklr.predict_proba(X_test)[:,1]
         auc_sklr = roc_auc_score(y_test, y_hat)
 
-        print(t_elapsed)
-        print(auc_palo, auc_sklr)
-        #self.assertTrue(auc_palo > auc_sklr)
+        print(f"Runtime(PaloBst): {t_elapsed_palo:.3f} seconds")
+        print(f"Runtime(sklearn): {t_elapsed_sklr:.3f} seconds")
+        print(f"AUROC(PaloBst): {auc_palo:.3f}")
+        print(f"AUROC(sklearn): {auc_sklr:.3f}")
+
 
 if __name__=="__main__":
 

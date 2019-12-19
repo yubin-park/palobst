@@ -1,6 +1,5 @@
 import numpy as np
 from palobst import basetree as bt
-from pprint import pprint
 from scipy.special import expit
 
 class PaloBst:
@@ -24,6 +23,16 @@ class PaloBst:
         self.t_svar = None
         self.t_sval = None
         self.t_pred = None
+
+    def warmup(self):
+        n = max(self.min_samples_split, self.min_samples_leaf)
+        n = max(int(n), 3) * 10
+        X = np.random.rand(n, 2)
+        y = np.random.rand(n)
+        if self.distribution == "bernoulli":
+            y = y > 0.5
+        self.fit(X, y)
+        self.predict(X)
 
     def fit(self, X, y):
 
@@ -61,6 +70,8 @@ class PaloBst:
         t_vals = np.zeros((t_nodes_all, 2))
         t_idx = np.zeros((t_nodes, 4), dtype=int)
 
+        cache = np.zeros((m,2))
+
         for i in range(self.n_estimators):
             ridx = np.random.permutation(n)
             X_, Y_ = X_[ridx], Y_[ridx]
@@ -73,7 +84,8 @@ class PaloBst:
                     self.learning_rate,
                     self.max_depth,
                     self.min_samples_split,
-                    self.min_samples_leaf)
+                    self.min_samples_leaf, 
+                    cache)
             if self.distribution == "bernoulli":
                 p = expit(Y_[:,1])
                 Y_[:,2] = Y_[:,0] - p # gradient
@@ -103,6 +115,7 @@ class PaloBst:
     
     def predict(self, X):
         return self.predict_proba(X)
+
 
 
 

@@ -13,7 +13,7 @@ setup(packages=find_packages(),
     author_email="yubin.park@gmail.com",
     url="https://github.com/yubin-park/palobst",
     license="Apaceh 2.0", 
-    install_requires = ["numpy", "numba"],
+    install_requires = ["numpy", "numba >= 0.46"],
     include_package_data=True,
     classifiers=[
         "Programming Language :: Python :: 3",
