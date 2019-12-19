@@ -1,6 +1,7 @@
 import numpy as np
-import basetree as bt
+from palobst import basetree as bt
 from pprint import pprint
+from scipy.special import expit
 
 class PaloBst:
 
@@ -19,33 +20,44 @@ class PaloBst:
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
-        self.xmaps = {}
+        self.intercept = 0
+        self.t_svar = None
+        self.t_sval = None
+        self.t_pred = None
 
     def fit(self, X, y):
 
         n, m = X.shape
-
-        # n_nodex_max x [svar, sval, is_leaf, i_start, i_end], [y, z]
         n_nodes_tree = (2**(self.max_depth + 1) - 1)
         n_nodes_trees = n_nodes_tree * self.n_estimators
         trees = np.zeros((n_nodes_trees, 7))
 
         # integerfy X
         X_ = np.zeros((n, m), dtype=int)
+        xmaps = {}
+        xmaps[-1] = [0]
         for i in range(m):
-            self.xmaps[i], X_[:,i] = np.unique(X[:,i], return_inverse=True) 
+            xmaps[i], X_[:,i] = np.unique(X[:,i], return_inverse=True) 
 
-        Y_ = np.ones((n, 4)) # [y, yhat, grad, hess]
+        y_avg = np.mean(y) 
+        Y_ = np.ones((n, 4)) # [y, yhat, gradient, Hessian]
         Y_[:,0] = y
-        Y_[:,1] = np.mean(y)
-        Y_[:,2] = Y_[:,0] - Y_[:,1]
         if self.distribution == "bernoulli":
-            p = 1/(1+np.exp(-Y_[:,0]))
-            Y_[:,3] = p * (1-p)
-        
+            mu = np.log(y_avg/(1-y_avg))
+            p = expit(mu)
+            self.intercept = mu
+            Y_[:,1] = self.intercept
+            Y_[:,2] = Y_[:,0] - p # gradient
+            Y_[:,3] = p * (1-p)   # Hessian
+        else:
+            self.intercept = y_avg
+            Y_[:,1] = self.intercept
+            Y_[:,2] = Y_[:,0] - Y_[:,1] # gradient, Hessian is 1
+
         t_nodes = 2**self.max_depth - 1
         t_nodes_all = t_nodes * self.n_estimators
         t_rules = np.zeros((t_nodes_all, 4), dtype=int)
+        t_rules[:,0] = -1
         t_vals = np.zeros((t_nodes_all, 2))
         t_idx = np.zeros((t_nodes, 4), dtype=int)
 
@@ -56,24 +68,43 @@ class PaloBst:
                     t_rules[(t_nodes*i):(t_nodes*(i+1)),:],
                     t_vals[(t_nodes*i):(t_nodes*(i+1)),:],
                     t_idx,
+                    self.distribution,
                     self.subsample,
+                    self.learning_rate,
                     self.max_depth,
                     self.min_samples_split,
                     self.min_samples_leaf)
+            if self.distribution == "bernoulli":
+                p = expit(Y_[:,1])
+                Y_[:,2] = Y_[:,0] - p # gradient
+                Y_[:,3] = p * (1-p)   # Hessian
+            elif self.distribution == "gaussian":
+                Y_[:,2] = Y_[:,0] - Y_[:,1] # gradient
 
+        # re-map X values
+        self.t_svar = t_rules[:,0]
+        self.t_sval = np.array([xmaps[t_rules[i,0]][t_rules[i,1]] 
+                        for i in range(t_nodes_all)])
+        self.t_vals = t_vals[:,0] 
+
+
+    def predict_proba(self, X):
+        y = np.full(X.shape[0], self.intercept)
+        y = bt.apply_tree(X, y, self.t_svar, self.t_sval, self.t_vals,
+                        self.n_estimators,
+                        2**self.max_depth -1)
+        if self.distribution == "bernoulli":
+            y_mat = np.zeros((X.shape[0], 2))
+            y_mat[:,1] = expit(y)
+            y_mat[:,0] = 1 - y_mat[:,1]
+            return y_mat
+        else:
+            return y
+    
     def predict(self, X):
+        return self.predict_proba(X)
 
-        pass
 
-
-if __name__=="__main__":
-
-    np.seterr(all="raise")
-    from sklearn.datasets import make_hastie_10_2
-    X, y = make_hastie_10_2(n_samples=10000)
-    y[y<0] = 0
-    palobst = PaloBst(n_estimators=5, max_depth=5)
-    palobst.fit(X, y)
 
 
 

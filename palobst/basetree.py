@@ -6,11 +6,12 @@ def grow(X, Y,
         t_rules,
         t_vals,
         t_idx,
+        distribution,
         subsample,
+        nu, # learning_rate
         max_depth,
         min_samples_split, 
-        min_samples_leaf,
-        task="cls"):
+        min_samples_leaf):
 
     n, m = X.shape
     t_idx[:,:] = 0
@@ -18,27 +19,24 @@ def grow(X, Y,
     # split the root node
     n_ib = int(n * subsample)
     n_oob = n - n_ib
-    X_ib = X[:n_ib,:]
-    X_oob = X[n_ib:,:]
-    Y_ib = Y[:n_ib,:]
-    Y_oob = Y[n_ib:,:]
+    X_ib, X_oob = X[:n_ib,:], X[n_ib:,:]
+    Y_ib, Y_oob = Y[:n_ib,:], Y[n_ib:,:]
     svar, sval = split(X_ib, Y_ib, min_samples_leaf)
-    le_ib = reorder(X_ib, Y_ib, 0, n_ib, svar, sval)
-    le_oob = reorder(X_oob, Y_oob, 0, n_oob, svar, sval)
+    c_ib = reorder(X_ib, Y_ib, 0, n_ib, svar, sval)
+    c_oob = reorder(X_oob, Y_oob, 0, n_oob, svar, sval)
 
     t_rules[0,0], t_rules[0,1] = svar, sval
-    t_vals[0,0] = np.mean(Y_ib[:,2])
-    t_vals[0,1] = np.mean(Y_oob[:,2])
-    t_idx[1,1], t_idx[1,3] = le_ib, le_oob # left node
-    t_idx[2,0], t_idx[2,2] = le_ib, le_oob # right node
-    t_idx[2,1], t_idx[2,3] = n_ib, n_oob
+    t_vals[0,0], t_vals[0,1] = np.mean(Y_ib[:,2]), np.mean(Y_oob[:,2])
+    t_idx[0,1], t_idx[0,3] = n_ib, n_oob
+    t_idx[1,1], t_idx[1,3] = c_ib, c_oob # end of left node
+    t_idx[2,0], t_idx[2,2] = c_ib, c_oob # start of right node
+    t_idx[2,1], t_idx[2,3] = n_ib, n_oob # end of right node
 
     for depth in range(1, max_depth+1):
         offset = 2**(depth-1) - 1
         for nid in range(offset, 2*offset+1):
             s_ib, e_ib = t_idx[nid,0], t_idx[nid,1]
             s_oob, e_oob = t_idx[nid,2], t_idx[nid,3]
-
             if e_ib == s_ib or e_oob == s_oob:
                 continue
 
@@ -47,28 +45,74 @@ def grow(X, Y,
 
             if (e_ib - s_ib < min_samples_leaf or
                 depth == max_depth):
-                t_rules[nid,0] = -1
+                t_rules[nid,0], t_rules[nid,1] = -1, 0
                 continue
 
             svar, sval = split(X_ib[s_ib:e_ib,:], Y_ib[s_ib:e_ib,:], 
                                 min_samples_leaf)
-            le_ib = reorder(X_ib, Y_ib, s_ib, e_ib, svar, sval)
-            le_oob = reorder(X_oob, Y_oob, s_ib, e_oob, svar, sval)
+            c_ib = reorder(X_ib, Y_ib, s_ib, e_ib, svar, sval)
+            c_oob = reorder(X_oob, Y_oob, s_oob, e_oob, svar, sval)
+
+
+            # NOTE: GAP Pre-pruning
+            if (s_oob == c_oob or
+                c_oob == e_oob or
+                check_GAP(Y_oob, s_oob, c_oob, nu, distribution) or
+                check_GAP(Y_oob, c_oob, e_oob, nu, distribution)):
+                t_rules[nid,0], t_rules[nid,1] = -1, 0
+                continue
 
             t_rules[nid,0], t_rules[nid,1] = svar, sval
             t_vals[nid,0] = np.mean(Y_ib[s_ib:e_ib,2])
             t_vals[nid,1] = np.mean(Y_oob[s_oob:e_oob,2])
-            t_idx[nid*2+1,1], t_idx[nid*2+1,3] = le_ib, le_oob # left node
-            t_idx[nid*2+2,0], t_idx[nid*2+2,2] = le_ib, le_oob # right node
-            t_idx[nid*2+2,1], t_idx[nid*2+2,3] = e_ib, e_oob
+            t_idx[nid*2+1,0], t_idx[nid*2+1,2] = s_ib, s_oob # left node
+            t_idx[nid*2+1,1], t_idx[nid*2+1,3] = c_ib, c_oob # left node
+            t_idx[nid*2+2,0], t_idx[nid*2+2,2] = c_ib, c_oob # right node
+            t_idx[nid*2+2,1], t_idx[nid*2+2,3] = e_ib, e_oob # right node
 
+    # NOTE: Adaptive Learning Rate (ALR)
+    for nid in range(t_rules.shape[0]):
+        if t_rules[nid,0] > -1 or t_idx[nid,0] == t_idx[nid,1]:
+            continue
+        s_ib, e_ib = t_idx[nid,0], t_idx[nid,1]
+        s_oob, e_oob = t_idx[nid,2], t_idx[nid,3]
+        gamma = t_vals[nid,0]
+        if gamma == 0:
+            continue
+        if distribution == "bernoulli":
+            num = np.sum(Y_oob[s_oob:e_oob,0]) + 0.5
+            denom = (np.sum((1 - Y_oob[s_oob:e_oob,0]) * 
+                        np.exp(Y_oob[s_oob:e_oob,1])) + 1)
+            nu_adj = np.log(num/denom)/gamma
+        else:
+            nu_adj = (np.mean((Y_oob[s_oob:e_oob,0] - 
+                        Y_oob[s_oob:e_oob,1]))/gamma)
+        if nu_adj < 0:
+            nu_adj = 0
+        elif nu_adj > nu:
+            nu_adj = nu
+        gamma = nu_adj * gamma
+        t_vals[nid,0] = gamma
+        Y_ib[s_ib:e_ib,1] += gamma
+        Y_oob[s_oob:e_oob,1] += gamma
+
+
+@jit(nopython=True)
+def check_GAP(Y, s, e, nu, distribution):
+    y = Y[s:e,0]
+    y_hat_old = Y[s:e,1] 
+    y_hat_new = y_hat_old + nu * np.mean(Y[s:e,2])
+    if loss(y, y_hat_old, distribution) < loss(y, y_hat_new, distribution):
+        return True
+    else:
+        return False
 
 @jit(nopython=True)
 def split(X, Y, min_samples_leaf):
 
-    loss_min = 1e10
+    loss_min = np.inf
     svar_best = -1
-    sval_best = -1
+    sval_best = 0
 
     for svar in range(X.shape[1]):
         sval, loss = get_sval(X[:,svar], Y[:,2], Y[:,3], min_samples_leaf)
@@ -98,12 +142,12 @@ def get_sval(x, grad, hess, min_samples_leaf):
     h = 0
     x_prev = -1
     x_best = -1
-    loss_min = 1e10
+    loss_min = np.inf
     for i in range(n):
         g = grad[i] + g
         h = hess[i] + h
-        loss = g**2 / (h + reg_lambda)
-        loss += (G - g)**2 / (H - h + reg_lambda)
+        loss = -g**2 / (h + reg_lambda)
+        loss -= (G - g)**2 / (H - h + reg_lambda)
         if x_prev != x[i]:
             if (loss < loss_min and
                 i > min_samples_leaf and
@@ -122,6 +166,34 @@ def reorder(X, Y, s, e, svar, sval):
     idx = np.argsort(~ln)
     X[s:e,:] = X_[idx,:]
     Y[s:e,:] = Y_[idx,:]
-    return np.sum(ln)
+    return s + np.sum(ln)
+
+@jit(nopython=True)
+def loss(y, y_hat, distribution):
+    if distribution == "bernoulli":
+        return np.mean(-2.0*(y*y_hat - np.logaddexp(0.0, y_hat)))
+    else:
+        return np.mean((y-y_hat)**2)
+    
+
+@jit(nopython=True)
+def apply_tree(X, y, t_svar, t_sval, t_vals, n_estimators, t_nodes):
+    for i in range(X.shape[0]):
+        for j in range(n_estimators):
+            y[i] += apply_tree0(X[i,:], 
+                        t_svar[(t_nodes*j):(t_nodes*(j+1))],
+                        t_sval[(t_nodes*j):(t_nodes*(j+1))],
+                        t_vals[(t_nodes*j):(t_nodes*(j+1))])
+    return y 
+
+@jit(nopython=True)
+def apply_tree0(x, t_svar, t_sval, t_vals):
+    nid = 0
+    while t_svar[nid] > -1:
+        if x[t_svar[nid]] < t_sval[nid]:
+            nid = nid * 2 + 1
+        else:
+            nid = nid * 2 + 2
+    return t_vals[nid]
 
 
