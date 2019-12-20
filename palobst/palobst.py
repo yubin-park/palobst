@@ -65,7 +65,7 @@ class PaloBst:
 
         t_nodes = 2**self.max_depth - 1
         t_nodes_all = t_nodes * self.n_estimators
-        t_rules = np.zeros((t_nodes_all, 4), dtype=int)
+        t_rules = np.zeros((t_nodes_all, 2), dtype=int)
         t_rules[:,0] = -1
         t_vals = np.zeros((t_nodes_all, 2))
 
@@ -74,6 +74,7 @@ class PaloBst:
         cache_h = np.zeros((n,m)) # Hessian
         cache_n = np.zeros((n,m), dtype=int)
         cache_l = np.zeros((m,2)) # Loss
+        cache_f = np.zeros(m) # feature importances
 
         for i in range(self.n_estimators):
             ridx = np.random.permutation(n)
@@ -92,6 +93,12 @@ class PaloBst:
                     cache_h,
                     cache_n,
                     cache_l)
+
+            bt.update_fi(t_rules[(t_nodes*i):(t_nodes*(i+1)),:],
+                        t_vals[(t_nodes*i):(t_nodes*(i+1)),:],
+                        cache_t,
+                        cache_f)
+
             if self.distribution == "bernoulli":
                 p = expit(Y_[:,1])
                 Y_[:,2] = Y_[:,0] - p # gradient
@@ -99,11 +106,14 @@ class PaloBst:
             elif self.distribution == "gaussian":
                 Y_[:,2] = Y_[:,0] - Y_[:,1] # gradient
 
+
+
         # re-map X values
         self.t_svar = t_rules[:,0]
         self.t_sval = np.array([xmaps[t_rules[i,0]][t_rules[i,1]] 
                         for i in range(t_nodes_all)])
         self.t_vals = t_vals[:,0] 
+        self.feature_importances_ = cache_f/self.n_estimators
 
 
     def predict_proba(self, X):
@@ -122,10 +132,8 @@ class PaloBst:
     def predict(self, X):
         return self.predict_proba(X)
 
-
     def get_feature_importances(self):
-        # TBD
-        pass
+        return self.feature_importances_
 
 
     

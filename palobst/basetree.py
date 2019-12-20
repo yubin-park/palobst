@@ -79,6 +79,7 @@ def grow(X, Y,
     # NOTE: Adaptive Learning Rate (ALR)
     for nid in prange(t_rules.shape[0]):
         if t_rules[nid,0] > -1 or cache_t[nid,0] == cache_t[nid,1]:
+            # Not a leaf node
             continue
         s_ib, e_ib = cache_t[nid,0], cache_t[nid,1]
         s_oob, e_oob = cache_t[nid,2], cache_t[nid,3]
@@ -219,5 +220,32 @@ def apply_tree0(x, t_svar, t_sval, t_vals):
         else:
             nid = nid * 2 + 2
     return t_vals[nid]
+
+@njit(fastmath=True)
+def update_fi(t_rules, t_vals, cache_t, cache_f):
+
+    n = cache_t.shape[0]
+    m = cache_f.shape[0]
+    score = 0
+    norm_factor = cache_t[0,1] - cache_t[0,0]
+
+    for nid in range(n):
+        if (t_rules[nid,0] > -1 or 
+            cache_t[nid,0] == cache_t[nid,1]):
+            # Not a leaf node
+            continue
+        score = np.abs(t_vals[nid,0]) 
+        score = score * (cache_t[nid,1] - cache_t[nid,0])
+        score = score / norm_factor
+        nid_tmp = nid
+        while nid_tmp > 0:
+            if nid_tmp % 2 == 1:
+                nid_tmp = int((nid_tmp - 1)/2)
+                cache_f[t_rules[nid_tmp,0]] += score
+            else:
+                nid_tmp = int((nid_tmp - 2)/2)
+                cache_f[t_rules[nid_tmp,0]] += score
+
+
 
 

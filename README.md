@@ -27,9 +27,12 @@ model.warmup() # this runs JIT
 
 model.fit(X_train, y_train)
 
-y_pred = mode.predict(X_test)
+y_pred = model.predict(X_test)
+
+# feature importances
+print(model.feature_importances_)
 ```
-Please see `test/test_regression.py` for more details.
+Please see `tests/test_regression.py` for more details.
 
 ## Classification Example
 
@@ -47,10 +50,14 @@ model.warmup() # this runs JIT
 
 model.fit(X_train, y_train)
 
-y_pred = mode.predict_proba(X)[:,1]
+y_pred = model.predict_proba(X)[:,1]
+
+# feature importances
+print(model.feature_importances_)
+
 ```
 
-Please see `test/test_classification.py` for more details.
+Please see `tests/test_classification.py` for more details.
 
 ## Reference
 - Yubin Park and Joyce C. Ho. Tackling Overfitting in Boosting for Noisy Healthcare Data. IEEE Transactions on Knowledge and Data Engineering. https://ieeexplore.ieee.org/document/8933485
