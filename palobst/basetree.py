@@ -5,39 +5,43 @@ from numba import njit, prange
 def grow(X, Y, 
         t_rules,
         t_vals,
-        t_idx,
         distribution,
         subsample,
         nu, # learning_rate
         max_depth,
         min_samples_split, 
         min_samples_leaf,
-        cache):
+        cache_t,
+        cache_g,
+        cache_h,
+        cache_n,
+        cache_l):
 
     n, m = X.shape
-    t_idx[:,:] = 0
+    cache_t[:,:] = 0
 
     # split the root node
     n_ib = int(n * subsample)
     n_oob = n - n_ib
     X_ib, X_oob = X[:n_ib,:], X[n_ib:,:]
     Y_ib, Y_oob = Y[:n_ib,:], Y[n_ib:,:]
-    svar, sval = split(X_ib, Y_ib, min_samples_leaf, cache)
+    svar, sval = split(X_ib, Y_ib, min_samples_leaf, 
+                        cache_g, cache_h, cache_n, cache_l)
     c_ib = reorder(X_ib, Y_ib, 0, n_ib, svar, sval)
     c_oob = reorder(X_oob, Y_oob, 0, n_oob, svar, sval)
 
     t_rules[0,0], t_rules[0,1] = svar, sval
     t_vals[0,0], t_vals[0,1] = np.mean(Y_ib[:,2]), np.mean(Y_oob[:,2])
-    t_idx[0,1], t_idx[0,3] = n_ib, n_oob
-    t_idx[1,1], t_idx[1,3] = c_ib, c_oob # end of left node
-    t_idx[2,0], t_idx[2,2] = c_ib, c_oob # start of right node
-    t_idx[2,1], t_idx[2,3] = n_ib, n_oob # end of right node
+    cache_t[0,1], cache_t[0,3] = n_ib, n_oob
+    cache_t[1,1], cache_t[1,3] = c_ib, c_oob # end of left node
+    cache_t[2,0], cache_t[2,2] = c_ib, c_oob # start of right node
+    cache_t[2,1], cache_t[2,3] = n_ib, n_oob # end of right node
 
     for depth in range(1, max_depth+1):
         offset = 2**(depth-1) - 1
         for nid in prange(offset, 2*offset+1):
-            s_ib, e_ib = t_idx[nid,0], t_idx[nid,1]
-            s_oob, e_oob = t_idx[nid,2], t_idx[nid,3]
+            s_ib, e_ib = cache_t[nid,0], cache_t[nid,1]
+            s_oob, e_oob = cache_t[nid,2], cache_t[nid,3]
             if e_ib == s_ib or e_oob == s_oob:
                 continue
 
@@ -50,7 +54,8 @@ def grow(X, Y,
                 continue
 
             svar, sval = split(X_ib[s_ib:e_ib,:], Y_ib[s_ib:e_ib,:], 
-                                min_samples_leaf, cache)
+                                min_samples_leaf, 
+                                cache_g, cache_h, cache_n, cache_l)
             c_ib = reorder(X_ib, Y_ib, s_ib, e_ib, svar, sval)
             c_oob = reorder(X_oob, Y_oob, s_oob, e_oob, svar, sval)
 
@@ -66,17 +71,17 @@ def grow(X, Y,
             t_rules[nid,0], t_rules[nid,1] = svar, sval
             t_vals[nid,0] = np.mean(Y_ib[s_ib:e_ib,2])
             t_vals[nid,1] = np.mean(Y_oob[s_oob:e_oob,2])
-            t_idx[nid*2+1,0], t_idx[nid*2+1,2] = s_ib, s_oob # left node
-            t_idx[nid*2+1,1], t_idx[nid*2+1,3] = c_ib, c_oob # left node
-            t_idx[nid*2+2,0], t_idx[nid*2+2,2] = c_ib, c_oob # right node
-            t_idx[nid*2+2,1], t_idx[nid*2+2,3] = e_ib, e_oob # right node
+            cache_t[nid*2+1,0], cache_t[nid*2+1,2] = s_ib, s_oob 
+            cache_t[nid*2+1,1], cache_t[nid*2+1,3] = c_ib, c_oob 
+            cache_t[nid*2+2,0], cache_t[nid*2+2,2] = c_ib, c_oob 
+            cache_t[nid*2+2,1], cache_t[nid*2+2,3] = e_ib, e_oob 
 
     # NOTE: Adaptive Learning Rate (ALR)
-    for nid in range(t_rules.shape[0]):
-        if t_rules[nid,0] > -1 or t_idx[nid,0] == t_idx[nid,1]:
+    for nid in prange(t_rules.shape[0]):
+        if t_rules[nid,0] > -1 or cache_t[nid,0] == cache_t[nid,1]:
             continue
-        s_ib, e_ib = t_idx[nid,0], t_idx[nid,1]
-        s_oob, e_oob = t_idx[nid,2], t_idx[nid,3]
+        s_ib, e_ib = cache_t[nid,0], cache_t[nid,1]
+        s_oob, e_oob = cache_t[nid,2], cache_t[nid,3]
         gamma = t_vals[nid,0]
         if gamma == 0:
             continue
@@ -109,61 +114,73 @@ def check_GAP(Y, s, e, nu, distribution):
         return False
 
 @njit(fastmath=True, parallel=True)
-def split(X, Y, min_samples_leaf, cache):
+def split(X, Y, min_samples_leaf, cache_g, cache_h, cache_n, cache_l):
 
     tol = 1e10
     svar_best = -1
     sval_best = 0
     loss_min = tol
-    cache[:,0] = tol
+    cache_g[:,:] = 0
+    cache_h[:,:] = 0
+    cache_n[:,:] = 0
+    cache_l[:,0] = tol
 
     for svar in prange(X.shape[1]):
-        sval, loss = get_sval(X[:,svar], Y[:,2], Y[:,3], min_samples_leaf)
+        sval, loss = get_sval(X[:,svar], Y[:,2], Y[:,3], min_samples_leaf,
+                            cache_g[:,svar], 
+                            cache_h[:,svar], 
+                            cache_n[:,svar])
         if sval < 0:
             continue
-        cache[svar,0] = loss
-        cache[svar,1] = sval
+        cache_l[svar,0] = loss
+        cache_l[svar,1] = sval
 
-    svar = np.argmin(cache[:,0])
-    if cache[svar,0] < tol:
-        loss_min = cache[svar,0]
+    svar = np.argmin(cache_l[:,0])
+    if cache_l[svar,0] < tol:
+        loss_min = cache_l[svar,0]
         svar_best = svar
-        sval_best = cache[svar,1]
+        sval_best = cache_l[svar,1]
 
     return svar_best, sval_best
 
 @njit(fastmath=True, parallel=True)
-def get_sval(x, grad, hess, min_samples_leaf):
+def get_sval(x, grad, hess, min_samples_leaf, cache_g, cache_h, cache_n):
 
     reg_lambda = 1.0
-   
-    n = x.shape[0]
-    idx = np.argsort(x)
-    x = x[idx]
-    grad = grad[idx]
-    hess = hess[idx]
-    G = np.sum(grad)
-    H = np.sum(hess)
 
-    g = 0
-    h = 0
-    x_prev = -1
+    n = x.shape[0]
+    G = 0
+    H = 0
+    g_i = 0
+    h_i = 0
+    n_i = 0
     x_best = -1
     loss_min = np.inf
-    for i in range(n):
-        g = grad[i] + g
-        h = hess[i] + h
-        loss = -g**2 / (h + reg_lambda)
-        loss -= (G - g)**2 / (H - h + reg_lambda)
-        if x_prev != x[i]:
-            if (loss < loss_min and
-                i > min_samples_leaf and
-                i < n - min_samples_leaf):
-                x_best = x[i]
-                loss_min = loss
-            x_prev = x[i]
 
+    for i in prange(n):
+        G += grad[i]
+        H += hess[i]
+        cache_g[x[i]] += grad[i]
+        cache_h[x[i]] += hess[i]
+        cache_n[x[i]] += 1
+  
+    for i in range(n-1):
+        if cache_n[i] == 0: # TODO: can be optimized further
+            continue
+        g_i += cache_g[i]
+        h_i += cache_h[i]
+        n_i += cache_n[i]
+        if (n_i < min_samples_leaf or
+            n_i > n - min_samples_leaf):
+            continue
+        loss = -g_i**2 / (h_i + reg_lambda)
+        loss = loss - (G - g_i)**2 / (H - h_i + reg_lambda)
+        if loss < loss_min:
+            loss_min = loss
+            x_best = i
+       
     return x_best, loss_min
+
 
 @njit(fastmath=True, parallel=True)
 def reorder(X, Y, s, e, svar, sval):

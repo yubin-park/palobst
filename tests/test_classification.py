@@ -10,10 +10,27 @@ import time
 
 class PaloBstTestCase(unittest.TestCase):
 
-    def test_cls(self):
+    def test_simple(self):
+
+        X = np.random.rand(1000, 2)
+        y = np.array((X[:,0] + X[:,1]) > 1.0, dtype=int)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, 
+                                                test_size=0.2)
+
+        model_palo = PaloBst(distribution="bernoulli",
+                                n_estimators=10, 
+                                learning_rate=1.0,
+                                max_depth=3)
+        model_palo.warmup()
+        model_palo.fit(X_train, y_train)
+        y_hat = model_palo.predict_proba(X_test)[:,1]
+        auc_palo = roc_auc_score(y_test, y_hat)
+        self.assertTrue(auc_palo > 0.5)
+
+    def test_hastie(self):
 
         np.random.seed(1)
-        n_samples = 500
+        n_samples = 200
         test_size = 0.2
         n_est = 100
         max_depth = 10

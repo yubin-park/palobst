@@ -28,12 +28,12 @@ class PaloBstTestCase(unittest.TestCase):
 
         self.assertTrue(mse_palo < mse_base)
 
-    def test_reg(self):
+    def test_friedman(self):
 
         np.random.seed(1)
-        n_samples = 500
+        n_samples = 1000
         test_size = 0.2
-        n_est = 100
+        n_est = 200
         max_depth = 10
         lr = 1.0
 

@@ -68,9 +68,12 @@ class PaloBst:
         t_rules = np.zeros((t_nodes_all, 4), dtype=int)
         t_rules[:,0] = -1
         t_vals = np.zeros((t_nodes_all, 2))
-        t_idx = np.zeros((t_nodes, 4), dtype=int)
 
-        cache = np.zeros((m,2))
+        cache_t = np.zeros((t_nodes, 4), dtype=int) 
+        cache_g = np.zeros((n,m)) # Gradient
+        cache_h = np.zeros((n,m)) # Hessian
+        cache_n = np.zeros((n,m), dtype=int)
+        cache_l = np.zeros((m,2)) # Loss
 
         for i in range(self.n_estimators):
             ridx = np.random.permutation(n)
@@ -78,14 +81,17 @@ class PaloBst:
             bt.grow(X_, Y_,
                     t_rules[(t_nodes*i):(t_nodes*(i+1)),:],
                     t_vals[(t_nodes*i):(t_nodes*(i+1)),:],
-                    t_idx,
                     self.distribution,
                     self.subsample,
                     self.learning_rate,
                     self.max_depth,
                     self.min_samples_split,
                     self.min_samples_leaf, 
-                    cache)
+                    cache_t,
+                    cache_g,
+                    cache_h,
+                    cache_n,
+                    cache_l)
             if self.distribution == "bernoulli":
                 p = expit(Y_[:,1])
                 Y_[:,2] = Y_[:,0] - p # gradient
@@ -117,9 +123,12 @@ class PaloBst:
         return self.predict_proba(X)
 
 
+    def get_feature_importances(self):
+        # TBD
+        pass
 
 
-
+    
 
 
 
